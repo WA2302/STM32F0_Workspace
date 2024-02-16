@@ -14,7 +14,7 @@
 OS_TCB *OSTCBCur;                    /* Pointer to currently running TCB      */
 static OS_TCB OSTCBTbl[OS_MAX_TASKS];/* Table of TCBs                         */
 
-uint32_t SysTime = 0;
+uint64_t SysTime = 0;
 
 /**
   * @brief  All tasks MUST be created completed before OSSTart().
@@ -77,9 +77,9 @@ __inline void __Sched (void)
   * @param  None
   * @retval None
   */
-__inline void OSStart (void)
+void OSStart (void)
 {
-    __NVIC_SetPriority ( PendSV_IRQn, 0xFF );  /** SCB->SHP[10] = 0xFF;      **/
+    NVIC_SetPriority ( PendSV_IRQn, 0xFF );  /** SCB->SHP[10] = 0xFF;      **/
     __set_PSP(0);
     __Sched();
     __enable_irq();
@@ -91,7 +91,7 @@ __inline void OSStart (void)
   * @param  ticks     is the time delay that the task will be suspended.
   * @retval None
   */
-__inline void OSTimeDly( uint16_t ticks )
+void OSTimeDly( uint16_t ticks )
 {
     OSTCBCur->OSTCBWakeTime = OSTime_Now() + ticks;
     while( OSTime_Now() < OSTCBCur->OSTCBWakeTime )
@@ -113,9 +113,14 @@ __ASM void PendSV_Handler (void)
     
     CPSID I               /* Prevent interruption during context switch       */
     MRS   R0, PSP         /* PSP is process stack pointer                     */
-    CBZ   R0, _nosave     /* Skip register save the first time                */
+    CMP   R0, #0x00
+    BEQ   _nosave         /* Skip register save the first time                */
                           /*                                                  */
-    STMDB R0!, {R4-R11}   /* PUSH r4-11 to current process stack              */
+	MOV R0, R8            /* PUSH r4-11 to current process stack              */
+	MOV R1, R9            /*                                                  */
+	MOV R2, R10           /*                                                  */
+	MOV R3, R11           /*                                                  */
+    PUSH {R0-R7}          /*                                                  */
                           /*                                                  */
     LDR   R1, =OSTCBCur   /* OSTCBCur->OSTCBStkPtr = PSP;                     */
     LDR   R1, [R1]        /*                                                  */
@@ -124,28 +129,37 @@ __ASM void PendSV_Handler (void)
 _nosave                   /*                                                  */
     LDR   R0, =OSTCBCur   /* OSTCBCur  = OSTCBCur->OSTCBNext;                 */
     LDR   R2, [R0]        /*                                                  */
-    ADD   R2, R2, #0x04   /*                                                  */
+    ADDS  R2, R2, #0x04   /*                                                  */
     LDR   R2, [R2]        /*                                                  */
     STR   R2, [R0]        /*                                                  */
                           /*                                                  */
     LDR   R0, [R2]        /* PSP = OSTCBCur->OSTCBStkPtr                      */
-    LDMIA R0!, {R4-R11}   /* POP r4-11 from new process stack                 */
+                          /*                                                  */
+    LDM   R0, {R0-R7}     /* POP r4-11 from new process stack                 */
+    MOV   R8, R0          /*                                                  */
+    MOV   R9, R1          /*                                                  */
+    MOV   R10, R2         /*                                                  */
+    MOV   R11, R3         /*                                                  */
                           /*                                                  */
     MSR   PSP, R0         /* Load PSP with new process SP                     */
 
-#if 0 /* Debug code */
-    MOVS   R1, #0x00
-    STMDB R0!,{R1} 
-    STMDB R0!,{R1} 
-    STMDB R0!,{R1} 
-    STMDB R0!,{R1} 
-    STMDB R0!,{R1} 
-    STMDB R0!,{R1} 
-    STMDB R0!,{R1} 
-    STMDB R0!,{R1} 
+#if 0                     /* Fill the stack for debug mode                    */
+    MOVS  R1, #0x00       /* Fill with 00                                     */
+    STM R0!,{R1}          /* Fill the stack "R4"                              */
+    STM R0!,{R1}          /* Fill the stack "R5"                              */
+    STM R0!,{R1}          /* Fill the stack "R6"                              */
+    STM R0!,{R1}          /* Fill the stack "R7"                              */
+    STM R0!,{R1}          /* Fill the stack "R8"                              */
+    STM R0!,{R1}          /* Fill the stack "R9"                              */
+    STM R0!,{R1}          /* Fill the stack "R10"                             */
+    STM R0!,{R1}          /* Fill the stack "R11"                             */
 #endif
 
-    ORR   LR, LR, #0x04   /* Ensure exception return uses process stack       */
+    MOVS    R2, #0x04     /* Ensure exception return uses process stack       */
+    MOV     R0, LR        /*                                                  */
+    ORRS    R0, R2        /*                                                  */
+    MOV     LR, R0        /*                                                  */
+                          /*                                                  */
     CPSIE I               /*                                                  */
                           /*                                                  */
     BX    LR              /* Exception return will restore remaining context  */
@@ -160,18 +174,6 @@ _nosave                   /*                                                  */
   */
 void SysTick_Handler(void)
 {
-    uint8_t i;
     SysTime++;
-    if( SysTime >= 0xFFFF0000 )
-    {
-        for(i = 0;i < OS_MAX_TASKS;i++)
-        {
-            if(OSTCBTbl[i].OSTCBWakeTime >= SysTime)
-            {
-                OSTCBTbl[i].OSTCBWakeTime -= 0xFFFF0000;
-            }
-        }
-        SysTime = 0;
-    }
 }
 /**************** (C) COPYRIGHT 2023 Windy Albert ******** END OF FILE ********/
